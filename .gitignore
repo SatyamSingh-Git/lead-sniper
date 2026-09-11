@@ -5,3 +5,4 @@ dashboard/data/events.json
 submission/demo.mp4
 *.log
 submission/*.pdf
+.n8n-local/
