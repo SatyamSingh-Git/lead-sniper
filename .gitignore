@@ -1,0 +1,6 @@
+.env
+node_modules/
+workflow/lead-sniper.local.json
+dashboard/data/events.json
+submission/demo.mp4
+*.log

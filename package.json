@@ -1,0 +1,20 @@
+{
+  "name": "lead-sniper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GitHub stargazer lead tracker: n8n workflow + live mission-control dashboard",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "preflight": "node scripts/preflight.js",
+    "test": "node scripts/simulate.js",
+    "build": "node scripts/build-workflow.js",
+    "dashboard": "node dashboard/server.js",
+    "mock": "node scripts/mock-api.js",
+    "replay": "node scripts/replay.js",
+    "scrub": "node scripts/scrub.js",
+    "shoot": "node scripts/shoot.js"
+  }
+}

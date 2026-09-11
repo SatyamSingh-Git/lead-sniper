@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lead Sniper · Mission Control</title>
+<style>
+  :root{
+    --bg:#07090c; --panel:#0d1117; --panel-2:#111823; --line:#1c2634;
+    --ink:#e6edf3; --muted:#7d8da3; --faint:#4a586b;
+    --signal:#f5b301; --data:#22d3ee; --danger:#ef4444; --ok:#34d399;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+    font-size:14px; line-height:1.5; min-height:100vh;
+    background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:56px 56px; background-position:-1px -1px;
+  }
+  body::before{content:"";position:fixed;inset:0;background:radial-gradient(120% 80% at 50% 0%,transparent 30%,var(--bg) 95%);pointer-events:none}
+  .wrap{position:relative;max-width:1500px;margin:0 auto;padding:20px 22px 60px}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---- header ---- */
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:14px 18px;
+    border:1px solid var(--line);border-radius:12px;background:rgba(13,17,23,.82);backdrop-filter:blur(8px)}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-weight:700;
+    letter-spacing:.18em;font-size:13px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--signal);box-shadow:0 0 0 0 rgba(245,179,1,.6);animation:pulse 2.4s infinite}
+  .dot.off{background:var(--faint);animation:none;box-shadow:none}
+  @keyframes pulse{70%{box-shadow:0 0 0 9px rgba(245,179,1,0)}100%{box-shadow:0 0 0 0 rgba(245,179,1,0)}}
+  .chip{font-family:var(--mono);font-size:11.5px;color:var(--muted);border:1px solid var(--line);
+    border-radius:999px;padding:4px 11px;white-space:nowrap}
+  .chip b{color:var(--data);font-weight:600}
+  header .spacer{flex:1}
+  .btn{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;color:var(--muted);cursor:pointer;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:6px 12px;transition:.15s}
+  .btn:hover{color:var(--signal);border-color:var(--signal)}
+
+  /* ---- panels ---- */
+  .panel{border:1px solid var(--line);border-radius:12px;background:rgba(13,17,23,.82);padding:16px 18px}
+  .ttl{font-family:var(--mono);font-size:10.5px;letter-spacing:.2em;color:var(--faint);margin:0 0 14px}
+  .grid-top{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;margin-top:14px}
+  .grid-main{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;margin-top:14px;align-items:start}
+  @media(min-width:1081px){.grid-main>.log-panel{position:sticky;top:16px;max-height:calc(100vh - 32px);display:flex;flex-direction:column}}
+  @media(max-width:1080px){.grid-top,.grid-main{grid-template-columns:1fr}}
+
+  /* ---- quota gauge ---- */
+  .quota-head{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+  .quota-now{font-family:var(--mono);font-size:34px;font-weight:700;letter-spacing:-.02em;line-height:1}
+  .quota-of{font-family:var(--mono);font-size:13px;color:var(--faint)}
+  .segs{display:flex;gap:3px;height:16px}
+  .seg{flex:1;border-radius:2px;background:#151d29;transition:background .5s ease}
+  .seg.on{background:var(--ok)}
+  .warn .seg.on{background:var(--signal)}
+  .crit .seg.on{background:var(--danger)}
+  .quota-foot{display:flex;justify-content:space-between;gap:12px;margin-top:11px;
+    font-family:var(--mono);font-size:11.5px;color:var(--muted);flex-wrap:wrap}
+  .saved{color:var(--ok)}
+
+  /* ---- stat tiles ---- */
+  .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .stat{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:var(--panel-2)}
+  .stat .k{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;color:var(--faint)}
+  .stat .v{font-family:var(--mono);font-size:21px;font-weight:700;margin-top:3px}
+
+  /* ---- funnel ---- */
+  .funnel{display:grid;grid-template-columns:repeat(6,1fr);gap:9px}
+  @media(max-width:760px){.funnel{grid-template-columns:repeat(3,1fr)}}
+  .fstage .fbar{height:5px;border-radius:3px;background:#151d29;overflow:hidden;margin-bottom:9px}
+  .fstage .ffill{height:100%;width:0;background:linear-gradient(90deg,var(--data),var(--signal));
+    transition:width .8s cubic-bezier(.22,1,.36,1)}
+  .fstage .fn{font-family:var(--mono);font-size:22px;font-weight:700}
+  .fstage .fl{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--faint);margin-top:2px}
+  .fstage .fp{font-family:var(--mono);font-size:10px;color:var(--data);margin-top:4px;min-height:14px}
+
+  /* ---- leads ---- */
+  .leads{display:flex;flex-direction:column;gap:12px}
+  .lead{border:1px solid var(--line);border-left:3px solid var(--tier,var(--faint));border-radius:11px;
+    background:linear-gradient(180deg,var(--panel-2),var(--panel));padding:15px 17px;position:relative;overflow:hidden}
+  .lead.fresh{animation:sweep 1.5s ease-out}
+  @keyframes sweep{0%{transform:translateY(7px);opacity:0}
+    35%{opacity:1;box-shadow:inset 0 0 60px -18px var(--tier)}100%{transform:none;opacity:1}}
+  .lrow{display:flex;gap:13px;align-items:flex-start}
+  .av{width:46px;height:46px;border-radius:9px;border:1px solid var(--line);background:var(--panel-2);flex:none;object-fit:cover}
+  .lmain{flex:1;min-width:0}
+  .lname{font-weight:600;font-size:15.5px;letter-spacing:-.01em}
+  .lname a{color:inherit;text-decoration:none}
+  .lname a:hover{color:var(--signal)}
+  .lsub{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:2px}
+  .ring{flex:none;position:relative;width:52px;height:52px}
+  .ring svg{transform:rotate(-90deg)}
+  .ring .rv{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--mono);
+    font-size:15px;font-weight:700;color:var(--tier)}
+  .badge{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;font-weight:700;color:var(--tier);
+    border:1px solid var(--tier);border-radius:999px;padding:2px 8px;display:inline-block;margin-top:6px}
+  .lstats{display:flex;gap:16px;flex-wrap:wrap;margin-top:11px;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+  .lstats b{color:var(--ink)}
+  .bio{margin-top:10px;color:var(--muted);font-size:13px}
+  .pitch{margin-top:11px;border:1px solid var(--line);border-radius:9px;background:rgba(245,179,1,.045);padding:11px 13px}
+  .pitch .ph{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;color:var(--signal);margin-bottom:5px}
+  .pitch .pt{font-size:13.5px}
+  .pitch .pf{font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:7px}
+  .lfoot{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:11px;
+    font-family:var(--mono);font-size:11px;color:var(--faint);flex-wrap:wrap}
+  .sent{color:var(--ok)}
+  .icp{display:inline-block;font-family:var(--mono);font-size:10px;color:var(--data);
+    border:1px solid rgba(34,211,238,.3);border-radius:4px;padding:1px 6px;margin:0 4px 4px 0}
+  details pre{font-family:var(--mono);font-size:10.5px;color:var(--muted);background:#080b10;
+    border:1px solid var(--line);border-radius:7px;padding:11px;overflow-x:auto;margin:9px 0 0;max-height:280px}
+  summary{cursor:pointer;color:var(--faint);font-family:var(--mono);font-size:10.5px}
+  summary:hover{color:var(--data)}
+
+  /* ---- log ---- */
+  .log{font-family:var(--mono);font-size:11.5px;max-height:640px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+  .log-panel .log{flex:1;min-height:0;max-height:none}
+  .log::-webkit-scrollbar{width:7px}.log::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+  .lg{display:grid;grid-template-columns:62px 62px 1fr;gap:9px;padding:4px 6px;border-radius:5px;align-items:baseline}
+  .lg:hover{background:var(--panel-2)}
+  .lg .t{color:var(--faint)}
+  .lg .k{font-weight:700;font-size:10px;letter-spacing:.08em}
+  .lg .m{color:var(--muted);overflow:hidden;text-overflow:ellipsis}
+  .k-POLL{color:var(--data)}.k-ENRICH{color:var(--data)}.k-SCORE{color:var(--signal)}
+  .k-AI{color:#c084fc}.k-SEND{color:var(--ok)}.k-SKIP{color:var(--faint)}.k-HALT{color:var(--danger)}
+  .free{color:var(--ok)}
+
+  .empty{text-align:center;padding:46px 20px;color:var(--muted)}
+  .empty h3{font-family:var(--mono);letter-spacing:.14em;font-size:13px;color:var(--ink);margin:0 0 10px}
+  .empty code{font-family:var(--mono);color:var(--signal);background:var(--panel-2);
+    border:1px solid var(--line);border-radius:5px;padding:2px 7px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand"><span class="dot" id="dot"></span>LEAD&nbsp;SNIPER</div>
+    <div class="chip">watching <b id="repo">—</b></div>
+    <div class="chip"><span id="stars">—</span> stars</div>
+    <div class="spacer"></div>
+    <div class="chip">poll <b id="pollno">0</b></div>
+    <div class="chip num" id="clock">--:--:--</div>
+    <button class="btn" id="reset">CLEAR</button>
+  </header>
+
+  <div class="grid-top">
+    <section class="panel" id="quota">
+      <p class="ttl">GITHUB API BUDGET</p>
+      <div class="quota-head">
+        <span class="quota-now num" id="qnow">—</span>
+        <span class="quota-of num" id="qof">/ 5,000 requests</span>
+      </div>
+      <div class="segs" id="segs"></div>
+      <div class="quota-foot">
+        <span>resets in <span class="num" id="qreset">--:--</span></span>
+        <span class="saved" id="qsaved">0 requests saved by 304s</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <p class="ttl">SESSION</p>
+      <div class="stats">
+        <div class="stat"><div class="k">QUALIFIED</div><div class="v" id="s-leads">0</div></div>
+        <div class="stat"><div class="k">AVG SCORE</div><div class="v" id="s-avg">—</div></div>
+        <div class="stat"><div class="k">LLM TOKENS</div><div class="v" id="s-tok">0</div></div>
+        <div class="stat"><div class="k">304 / POLLS</div><div class="v" id="s-304">0</div></div>
+      </div>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:14px">
+    <p class="ttl">ACQUISITION FUNNEL</p>
+    <div class="funnel" id="funnel"></div>
+  </section>
+
+  <div class="grid-main">
+    <section class="panel">
+      <p class="ttl">TARGETS ACQUIRED</p>
+      <div class="leads" id="leads"></div>
+    </section>
+    <section class="panel log-panel">
+      <p class="ttl">EVENT STREAM</p>
+      <div class="log" id="log"></div>
+    </section>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const SEGMENTS = 40;
+const TIER_COLOR = { HOT: '#f5b301', WARM: '#22d3ee', COLD: '#64748b' };
+
+let events = [];
+let seenLeads = new Set();
+
+const fmt = (n) => (n ?? 0).toLocaleString();
+const clock = (ms) => new Date(ms).toTimeString().slice(0, 8);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+for (let i = 0; i < SEGMENTS; i++) $('segs').insertAdjacentHTML('beforeend', '<div class="seg"></div>');
+
+const STAGES = [
+  ['scanned', 'SCANNED'], ['fresh', 'NEW'], ['enriched', 'ENRICHED'],
+  ['qualified', 'QUALIFIED'], ['pitched', 'PITCHED'], ['delivered', 'SENT'],
+];
+$('funnel').innerHTML = STAGES.map(([k, label]) =>
+  `<div class="fstage"><div class="fbar"><div class="ffill" id="f-${k}"></div></div>
+   <div class="fn num" id="fv-${k}">0</div><div class="fl">${label}</div>
+   <div class="fp num" id="fp-${k}"></div></div>`).join('');
+
+function derive() {
+  const polls = events.filter((e) => e.type === 'poll');
+  const scores = events.filter((e) => e.type === 'score');
+  const sent = events.filter((e) => e.type === 'delivered');
+  const last = polls.at(-1) ?? {};
+  const qualified = scores.filter((e) => e.qualified);
+
+  const delivery = new Map(sent.map((e) => [e.login, e]));
+  const leads = qualified.map((s) => ({ ...s, delivery: delivery.get(s.login) })).reverse();
+
+  return {
+    repo: last.repo, poll: last.poll ?? 0,
+    // A 304 poll reports no star count, so keep the last one we actually learned rather
+    // than blanking the header every time revalidation succeeds.
+    totalStars: polls.findLast((e) => e.totalStars)?.totalStars,
+    remaining: last.remaining, reset: last.reset,
+    notModified: polls.filter((e) => e.notModified).length,
+    pollCount: polls.length,
+    funnel: {
+      scanned: polls.reduce((n, e) => n + (e.scanned ?? 0), 0),
+      fresh: polls.reduce((n, e) => n + (e.newCount ?? 0), 0),
+      enriched: scores.length,
+      qualified: qualified.length,
+      pitched: sent.length,
+      delivered: sent.filter((e) => e.status >= 200 && e.status < 300).length,
+    },
+    leads,
+    tokens: sent.reduce((n, e) => n + (e.tokensUsed ?? 0), 0),
+    avgScore: qualified.length ? Math.round(qualified.reduce((n, e) => n + e.score, 0) / qualified.length) : null,
+  };
+}
+
+function renderQuota(s) {
+  const limit = 5000;
+  const remaining = s.remaining >= 0 ? s.remaining : null;
+  $('qnow').textContent = remaining === null ? '—' : fmt(remaining);
+  $('qof').textContent = `/ ${fmt(limit)} requests`;
+
+  const ratio = remaining === null ? 0 : remaining / limit;
+  const lit = Math.round(ratio * SEGMENTS);
+  const panel = $('quota');
+  panel.className = 'panel' + (ratio < 0.05 ? ' crit' : ratio < 0.2 ? ' warn' : '');
+  [...$('segs').children].forEach((seg, i) => seg.classList.toggle('on', i < lit));
+
+  if (s.reset) {
+    const left = Math.max(0, s.reset * 1000 - Date.now());
+    $('qreset').textContent = `${String(Math.floor(left / 60000)).padStart(2, '0')}:${String(Math.floor(left / 1000) % 60).padStart(2, '0')}`;
+  }
+  // Each 304 is a poll that returned fresh data for free; that is the whole point of the ETag work.
+  $('qsaved').textContent = `${s.notModified} request${s.notModified === 1 ? '' : 's'} saved by 304s`;
+}
+
+function renderLead(lead) {
+  const color = TIER_COLOR[lead.tier] ?? TIER_COLOR.COLD;
+  const p = lead.profile ?? {};
+  const d = lead.delivery;
+  const fresh = !seenLeads.has(lead.login);
+  seenLeads.add(lead.login);
+
+  const meta = [p.company, p.location].filter(Boolean).map(esc).join(' · ');
+  const icp = (lead.icpHits ?? []).map((k) => `<span class="icp">${esc(k)}</span>`).join('');
+
+  return `
+  <article class="lead ${fresh ? 'fresh' : ''}" style="--tier:${color}">
+    <div class="lrow">
+      <img class="av" src="${esc(p.avatarUrl)}" alt="" loading="lazy"
+           onerror="this.style.visibility='hidden'">
+      <div class="lmain">
+        <div class="lname"><a href="${esc(p.htmlUrl)}" target="_blank" rel="noopener">${esc(p.name || p.login)}</a>
+          <span style="color:var(--faint);font-family:var(--mono);font-size:12px">@${esc(p.login)}</span></div>
+        <div class="lsub">${meta || 'no company or location'}</div>
+        <span class="badge">${esc(lead.tier)}</span>
+      </div>
+      <div class="ring">
+        <svg width="52" height="52">
+          <circle cx="26" cy="26" r="22" fill="none" stroke="#151d29" stroke-width="4"></circle>
+          <circle cx="26" cy="26" r="22" fill="none" stroke="${color}" stroke-width="4" stroke-linecap="round"
+                  stroke-dasharray="138.2" stroke-dashoffset="${138.2 - (138.2 * lead.score) / 100}"></circle>
+        </svg>
+        <div class="rv">${lead.score}</div>
+      </div>
+    </div>
+
+    <div class="lstats">
+      <span><b>${fmt(p.followers)}</b> followers</span>
+      <span><b>${fmt(p.publicRepos)}</b> repos</span>
+      <span>since <b>${String(p.createdAt ?? '').slice(0, 4)}</b></span>
+      ${p.email || p.blog ? '<span style="color:var(--ok)">reachable</span>' : ''}
+    </div>
+
+    <div class="bio">${esc(p.bio) || '<i style="color:var(--faint)">no bio</i>'}</div>
+    ${icp ? `<div style="margin-top:8px">${icp}</div>` : ''}
+
+    ${d ? `<div class="pitch">
+      <div class="ph">${d.pitchSource === 'llm' ? 'AI SALES PITCH' : 'TEMPLATE FALLBACK'}</div>
+      <div class="pt">${esc(d.pitch)}</div>
+      <div class="pf">${esc(d.angle)} · confidence ${(d.confidence ?? 0).toFixed(2)} · ${esc(d.modelUsed ?? '')}</div>
+    </div>` : '<div class="pitch"><div class="ph">AWAITING PITCH</div></div>'}
+
+    <div class="lfoot">
+      <span>gate: ${esc(lead.gate)}</span>
+      <span class="${d && d.status < 300 ? 'sent' : ''}">${d ? (d.status < 300 ? `delivered · ${clock(d.ts)}` : `discord ${d.status}`) : 'pending'}</span>
+    </div>
+    <details><summary>raw profile json</summary><pre>${esc(JSON.stringify({ score: lead.score, parts: lead.scoreParts, profile: p }, null, 2))}</pre></details>
+  </article>`;
+}
+
+function logLine(e) {
+  const t = clock(e.ts);
+  if (e.type === 'poll' && e.notModified)
+    return ['POLL', `GET /stargazers <span class="free">304 · 0 quota</span>`, t];
+  if (e.type === 'poll' && e.halt)
+    return ['HALT', `${esc(e.reason)} · ${fmt(e.remaining)} left`, t];
+  if (e.type === 'poll')
+    return ['POLL', `GET /stargazers 200 · ${e.newCount} new of ${e.scanned} scanned`, t];
+  if (e.type === 'score' && !e.qualified)
+    return ['SKIP', `${esc(e.login)} score ${e.score} · ${esc(e.gate)}`, t];
+  if (e.type === 'score')
+    return ['SCORE', `${esc(e.login)} <b style="color:var(--signal)">${e.score}</b> ${esc(e.tier)} · ${esc(e.gate)}`, t];
+  if (e.type === 'delivered')
+    return ['SEND', `${esc(e.login)} → discord ${e.status} · ${e.tokensUsed} tok · ${esc(e.pitchSource)}`, t];
+  return ['·', esc(e.type), t];
+}
+
+function render() {
+  const s = derive();
+
+  $('repo').textContent = s.repo ?? 'not started';
+  $('stars').textContent = s.totalStars ? fmt(s.totalStars) : '—';
+  $('pollno').textContent = s.poll;
+  $('dot').className = 'dot' + (events.length ? '' : ' off');
+
+  renderQuota(s);
+
+  $('s-leads').textContent = s.funnel.qualified;
+  $('s-avg').textContent = s.avgScore ?? '—';
+  $('s-tok').textContent = fmt(s.tokens);
+  $('s-304').textContent = `${s.notModified}/${s.pollCount}`;
+
+  const peak = Math.max(...Object.values(s.funnel), 1);
+  STAGES.forEach(([key], i) => {
+    const count = s.funnel[key];
+    $(`fv-${key}`).textContent = count;
+    // A floor on the width: 6 of 100 scanned is an honest 6% bar, but at 6% the last four
+    // stages all read as empty, which hides the part of the funnel we actually care about.
+    $(`f-${key}`).style.width = count ? `max(4%, ${(count / peak) * 100}%)` : '0';
+    const prev = i ? s.funnel[STAGES[i - 1][0]] : 0;
+    $(`fp-${key}`).textContent = i && prev ? `${Math.round((count / prev) * 100)}% of prev` : '';
+  });
+
+  $('leads').innerHTML = s.leads.length
+    ? s.leads.map(renderLead).join('')
+    : `<div class="empty"><h3>NO TARGETS YET</h3>
+       <p>Run the workflow in n8n, or replay a recorded run:</p><p><code>npm run replay</code></p></div>`;
+
+  const lines = events.slice(-80).reverse();
+  $('log').innerHTML = lines.map((e) => {
+    const [kind, msg, t] = logLine(e);
+    return `<div class="lg"><span class="t">${t}</span><span class="k k-${kind}">${kind}</span><span class="m">${msg}</span></div>`;
+  }).join('');
+}
+
+const stream = new EventSource('/stream');
+stream.onmessage = (msg) => {
+  const data = JSON.parse(msg.data);
+  if (data.type === 'snapshot') { events = data.events; seenLeads = new Set(); }
+  else if (data.type === 'reset') { events = []; seenLeads = new Set(); }
+  else events.push(data);
+  render();
+};
+
+$('reset').onclick = () => fetch('/reset', { method: 'POST' });
+setInterval(() => {
+  $('clock').textContent = clock(Date.now());
+  const s = derive();
+  if (s.reset) renderQuota(s);
+}, 1000);
+
+render();
+</script>
+</body>
+</html>
