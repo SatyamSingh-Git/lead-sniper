@@ -63,86 +63,41 @@ async function checkRepoAndStarHeader() {
   }
 
   const headers = {
-    // Without this Accept header the response is a bare user array with no starred_at,
-    // and there is nothing to dedupe a poll against.
-    Accept: 'application/vnd.github.star+json',
+    Accept: 'application/vnd.github+json',
     'User-Agent': 'lead-sniper-preflight',
     'X-GitHub-Api-Version': '2022-11-28',
   };
   if (!isPlaceholder(env.GITHUB_TOKEN)) headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
 
-  const url = `https://api.github.com/repos/${owner}/${name}/stargazers?per_page=1`;
+  // The repository events feed, which is what the workflow actually polls. /stargazers is
+  // not checked here because GitHub returns 404 on it for any repo you do not own.
+  const url = `https://api.github.com/repos/${owner}/${name}/events?per_page=100`;
   const res = await fetch(url, { headers });
 
   if (res.status === 404) {
-    // GitHub answers 404 rather than 403 here so it never discloses what you cannot reach.
-    // If the repo itself is readable, the repo is fine and the token's scopes are not:
-    // /stargazers and /subscribers return user lists and are gated, while /forks and
-    // /contributors on the same repo are not.
-    const meta = await fetch(`https://api.github.com/repos/${owner}/${name}`, { headers });
-    if (meta.ok) {
-      return record(
-        'Target repo',
-        false,
-        `${env.GITHUB_REPO} is readable, but its stargazer list is not (404)`,
-        'The token needs a scope to read user lists. Regenerate a classic token with read:user (and public_repo if that alone is not enough).',
-      );
-    }
     return record('Target repo', false, `${env.GITHUB_REPO} not found`);
   }
-  if (res.status === 401) {
-    return record(
-      'Target repo',
-      false,
-      'stargazers requires authentication (401)',
-      'This endpoint is auth-gated — unlike /users, it returns 401 with no token at all.',
-    );
-  }
   if (res.status === 403 || res.status === 429) {
-    const left = Number(res.headers.get('x-ratelimit-remaining') ?? -1);
-    const retryAfter = res.headers.get('retry-after');
-
-    // A 403 with quota still on the clock is a permissions problem wearing a rate limit's
-    // status code. Reporting it as "rate limited" sends you off to wait for a reset that
-    // will change nothing.
-    if (left > 0 && !retryAfter) {
-      const { message } = await res.json().catch(() => ({}));
-      return record(
-        'Target repo',
-        false,
-        `${message ?? 'forbidden'} (403, ${left} requests still available)`,
-        'Fine-grained tokens reach only repos you own. Use a classic token with no scopes, or grant "Public Repositories (read-only)".',
-      );
-    }
-
     const reset = Number(res.headers.get('x-ratelimit-reset') ?? 0) * 1000;
-    return record('Target repo', false, `rate limited (${res.status})`, `Resets ${new Date(reset).toLocaleTimeString()}.`);
+    return record('Target repo', false, `rate limited (${res.status})`,
+      `Resets ${new Date(reset).toLocaleTimeString()}.`);
   }
   if (!res.ok) {
-    return record('Target repo', false, `unexpected status ${res.status}`);
-  }
-  if (res.redirected) {
-    record('Repo redirect', 'warn', `${env.GITHUB_REPO} 301s to ${res.url.split('/').slice(-2, -1)[0]}`,
-      'The repo was renamed or transferred. Use the canonical path to save a request per poll.');
+    return record('Target repo', false, `events feed returned ${res.status}`);
   }
 
-  const link = res.headers.get('link') ?? '';
-  const last = link.match(/[?&]page=(\d+)[^>]*>;\s*rel="last"/);
-  const totalStars = last ? Number(last[1]) : 1;
-  const body = await res.json();
-  const hasTimestamp = Array.isArray(body) && body[0] && 'starred_at' in body[0];
+  const events = await res.json();
+  const stars = Array.isArray(events) ? events.filter((e) => e.type === 'WatchEvent') : [];
+  const span = stars.length > 1
+    ? (Date.parse(stars[0].created_at) - Date.parse(stars[stars.length - 1].created_at)) / 3600e3
+    : 0;
 
-  record(
-    'Target repo',
-    true,
-    `${c.cyan(env.GITHUB_REPO)} — ${totalStars.toLocaleString()} stars, newest on page ${Math.ceil(totalStars / 100)}`,
-  );
-  record(
-    'starred_at header',
-    hasTimestamp,
-    hasTimestamp ? `star+json accepted, cursor field present` : 'no starred_at in response',
-    hasTimestamp ? null : 'Dedupe by timestamp will not work without it.',
-  );
+  record('Target repo', true,
+    `${c.cyan(env.GITHUB_REPO)} — ${stars.length} stars in the last ${events.length} events` +
+    (span ? `, covering ${span.toFixed(0)}h` : ''));
+
+  const interval = res.headers.get('x-poll-interval');
+  if (interval) record('Poll interval', true, `GitHub asks for ${c.cyan(interval + 's')} between polls`);
 
   const etag = res.headers.get('etag');
   if (etag) {
@@ -150,14 +105,10 @@ async function checkRepoAndStarHeader() {
     const before = Number(res.headers.get('x-ratelimit-remaining'));
     const after = Number(revalidated.headers.get('x-ratelimit-remaining'));
     const free = revalidated.status === 304 && after >= before;
-    record(
-      'ETag revalidation',
-      free ? true : 'warn',
-      free
-        ? `304 Not Modified cost ${c.cyan('0')} of quota (${before} then ${after})`
-        : `got ${revalidated.status}, quota ${before} then ${after}`,
-      free ? null : 'Conditional requests are the main rate-limit lever; expected a free 304.',
-    );
+    record('ETag revalidation', free ? true : 'warn',
+      free ? `304 Not Modified cost ${c.cyan('0')} of quota (${before} then ${after})`
+           : `got ${revalidated.status}, quota ${before} then ${after}`,
+      free ? null : 'Conditional requests are the main rate-limit lever; expected a free 304.');
   }
 }
 
@@ -171,7 +122,10 @@ async function checkOpenRouter() {
   });
 
   if (!res.ok) {
-    return record('OpenRouter key', false, `rejected (${res.status})`);
+    const body = await res.json().catch(() => ({}));
+    const reason = body?.error?.message ?? `rejected (${res.status})`;
+    return record('OpenRouter key', false, reason,
+      /expired|invalid/i.test(reason) ? 'Create a fresh key at openrouter.ai/keys and update OPENROUTER_API_KEY in .env.' : null);
   }
 
   const { data } = await res.json();
