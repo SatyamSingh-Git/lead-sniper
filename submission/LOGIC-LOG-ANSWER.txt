@@ -1,0 +1,30 @@
+Paste this into the form's "Logic Log: GitHub API Rate Limit Handling" box.
+Full version with measurements: github.com/SatyamSingh-Git/lead-sniper/blob/main/LOGIC-LOG.md
+--------------------------------------------------------------------------------
+
+I did not use a delay node as the rate-limit strategy. A delay slows how fast you spend quota; it does not reduce what you spend. The strategy has five layers.
+
+1. REQUESTS THAT COST NOTHING (the main lever)
+Every poll sends If-None-Match with the ETag from the previous response. When nothing has changed GitHub replies 304 Not Modified, and a 304 does not decrement x-ratelimit-remaining. Revalidation is free, so most polls cost zero quota. I verified this live: two consecutive polls, x-ratelimit-remaining 4898 then 4898 after the 304. Two implementation details that are easy to get wrong: ETags must be cached per URL (different endpoints are different resources with non-interchangeable validators), and the n8n HTTP node needs neverError:true or it treats 304 as a failure and throws before your own branching can act on it.
+
+2. AUTHENTICATE
+Unauthenticated is 60 requests/hour per IP; a token raises it to 5,000. A 5-minute schedule spends 12 polls an hour before any enrichment, so the anonymous allowance is not workable.
+
+3. FEWER REQUESTS PER POLL
+The documented endpoint, GET /repos/:owner/:repo/stargazers, returns 404 for every repo you do not own. I confirmed this is not a permissions problem: the 404 comes back with an empty x-accepted-oauth-scopes, a classic token carrying repo/user/admin:org still gets 404, repos from 5 stars to 203,989 stars all behave identically, /forks and /contributors on the same repo return 200, and GraphQL reports stargazerCount 102246 for fastapi/fastapi while its stargazers connection returns totalCount 0. It is an anti-scraping lockdown.
+
+So the trigger polls GET /repos/:owner/:repo/events instead, where every star arrives as a WatchEvent. That feed is open, and it is cheaper than what it replaced: one request per poll instead of two, newest-first so there is no Link rel="last" pagination walk, and created_at is always present with no opt-in media type needed. One page of 100 events covered 61 hours of stars on fastapi/fastapi, so a 5-minute poll cannot miss any.
+
+Also: per_page=100, a MAX_ENRICH_PER_RUN cap so one viral hour cannot drain the budget, and the qualification gate runs BEFORE the LLM call, so no tokens are spent on a lead we were never going to contact.
+
+4. SECONDARY RATE LIMITS ARE A SEPARATE PROBLEM
+GitHub enforces secondary limits on concurrency and burst, independently of the hourly quota. You can sit at 4,900 of 5,000 remaining and still get a 403 for firing 30 parallel requests. n8n's default is exactly that: it fans all items out at once. The enrichment node overrides it with batching {batchSize: 1, batchInterval: 800} - one profile at a time, 800ms apart. This is the one place a delay genuinely is the right tool: not to conserve quota, but to stay under a concurrency ceiling.
+
+On retries, every GitHub node has retryOnFail with waitBetweenTries 2000. Where a response carries Retry-After that value wins; otherwise retries back off exponentially with jitter on 403, 429 and 5xx.
+
+I also read GitHub's X-Poll-Interval response header, which states how frequently the feed may be polled, rather than inventing an interval. It is surfaced in telemetry.
+
+5. FAIL SAFE AND SELF-HEAL
+x-ratelimit-remaining and x-ratelimit-reset are read from every response. Below a 250-request reserve the run stops. Two deliberate choices: it ends cleanly rather than throwing, because an errored n8n execution is something a human has to clear whereas a clean end means the next scheduled poll simply resumes; and the cursor is not advanced, so nothing is skipped. The reserve exists so a concurrent job sharing the token cannot push us to a hard zero mid-flight.
+
+Because rate-limit work is invisible in a Discord screenshot, I built a dashboard that renders the live quota gauge, the count of requests saved by 304s, and an event stream showing each poll's status - so the mechanism is demonstrable rather than merely claimed.
