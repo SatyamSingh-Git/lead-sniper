@@ -30,14 +30,18 @@ That's the problem."*
 
 **2 · The flow (0:15–0:45)**
 n8n canvas, whole workflow visible. Trace the path with the cursor while talking:
-*"Poll the stargazers, enrich each new one, filter, write a pitch, ship it to Discord."*
-Then hover the **Probe Stargazers** node and open its headers:
-*"Two headers do most of the work here. `star+json` — without it there's no timestamp to dedupe
-on. `If-None-Match` — this is why most polls cost zero API quota."*
+*"Poll the repo's event feed, enrich each new stargazer, filter, write a pitch, ship it to
+Discord."*
+Then hover the **Fetch Repo Events** node and open its headers:
+*"GitHub withdrew the stargazers endpoint for repos you don't own — 404 at every size, with a
+fully-scoped token. Stars still show up in the events feed as WatchEvents, and that feed is
+open. It's also cheaper: newest-first, so there's no pagination to walk."*
+Then point at `If-None-Match`:
+*"And this is why most polls cost zero API quota."*
 
 **3 · Run it (0:45–1:30)**
 Hit **Run Once (Demo)**. Cut to the dashboard as it fills:
-- funnel animating — 100 scanned, 6 new, 3 qualified
+- funnel animating — stargazers scanned, new ones enriched, a handful qualified
 - the quota gauge, and the `304 · 0 quota` lines in the event stream
 - a lead card landing with its score ring
 

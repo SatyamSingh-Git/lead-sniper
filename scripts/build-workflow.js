@@ -96,9 +96,7 @@ const githubHeaders = (extra = []) => ({
   sendHeaders: true,
   headerParameters: {
     parameters: [
-      // Without star+json the response is a bare user array with no starred_at, and there
-      // is no timestamp to dedupe successive polls against.
-      { name: 'Accept', value: 'application/vnd.github.star+json' },
+      { name: 'Accept', value: 'application/vnd.github+json' },
       { name: 'X-GitHub-Api-Version', value: '2022-11-28' },
       ...extra,
     ],
@@ -161,14 +159,14 @@ function buildWorkflow(webhookUrl) {
     code('Prepare Poll', '01-prepare-poll.js', at(2)),
 
     http(
-      'Probe Stargazers',
+      'Fetch Repo Events',
       at(3),
       {
         method: 'GET',
-        url: '={{ $json.probeUrl }}',
+        url: '={{ $json.eventsUrl }}',
         authentication: 'genericCredentialType',
         genericAuthType: 'httpHeaderAuth',
-        ...githubHeaders([{ name: 'If-None-Match', value: '={{ $json.probeEtag }}' }]),
+        ...githubHeaders([{ name: 'If-None-Match', value: '={{ $json.eventsEtag }}' }]),
         options: {
           response: { response: { fullResponse: true, neverError: true } },
           redirect: { redirect: { followRedirects: true } },
@@ -177,7 +175,7 @@ function buildWorkflow(webhookUrl) {
       { credentials: GITHUB_CRED, retryOnFail: true, maxTries: 3, waitBetweenTries: 2000 },
     ),
 
-    ifNode('Stargazers Changed?', at(4), '={{ $json.statusCode }}', 304, 'number'),
+    ifNode('Repo Changed?', at(4), '={{ $json.statusCode }}', 304, 'number'),
     noOp('No New Stars (0 quota)', at(5, 1)),
 
     // The 304 path is the one that runs most of the time, so it has to report itself —
@@ -188,31 +186,12 @@ function buildWorkflow(webhookUrl) {
       `{ type: 'poll', poll: $('Prepare Poll').first().json.poll, repo: $('Config').first().json.targetRepo, scanned: 0, newCount: 0, halt: true, reason: 'not_modified', notModified: true, remaining: Number($json.headers['x-ratelimit-remaining'] || -1), reset: Number($json.headers['x-ratelimit-reset'] || 0) }`,
     ),
 
-    code('Resolve Last Page', '02-resolve-last-page.js', at(5)),
-
-    http(
-      'Fetch Newest Page',
-      at(6),
-      {
-        method: 'GET',
-        url: '={{ $json.pageUrl }}',
-        authentication: 'genericCredentialType',
-        genericAuthType: 'httpHeaderAuth',
-        ...githubHeaders([{ name: 'If-None-Match', value: '={{ $json.pageEtag }}' }]),
-        options: {
-          response: { response: { fullResponse: true, neverError: true } },
-          redirect: { redirect: { followRedirects: true } },
-        },
-      },
-      { credentials: GITHUB_CRED, retryOnFail: true, maxTries: 3, waitBetweenTries: 2000 },
-    ),
-
     code('Select New Stargazers', '03-select-new-stargazers.js', at(7)),
 
     telemetry(
       'Telemetry: Poll',
       at(7, 2),
-      `{ type: 'poll', poll: $json.poll, repo: $json.targetRepo, totalStars: $json.totalStars, scanned: $json.scanned, newCount: $json.newCount, halt: $json.halt, reason: $json.reason || null, remaining: $json.remaining, reset: $json.reset, notModified: false }`,
+      `{ type: 'poll', poll: $json.poll, repo: $json.targetRepo, scanned: $json.scanned, newCount: $json.newCount, halt: $json.halt, reason: $json.reason || null, remaining: $json.remaining, reset: $json.reset, notModified: false }`,
       // Select New Stargazers emits one item per lead, so without executeOnce this node
       // posts one duplicate poll event per lead and the funnel counts everything N times.
       { executeOnce: true },
@@ -314,15 +293,13 @@ function buildWorkflow(webhookUrl) {
     'Every 5 Minutes': wire('Every 5 Minutes', [['Config']]),
     'Run Once (Demo)': wire('Run Once (Demo)', [['Config']]),
     Config: wire('Config', [['Prepare Poll']]),
-    'Prepare Poll': wire('Prepare Poll', [['Probe Stargazers']]),
-    'Probe Stargazers': wire('Probe Stargazers', [['Stargazers Changed?']]),
+    'Prepare Poll': wire('Prepare Poll', [['Fetch Repo Events']]),
+    'Fetch Repo Events': wire('Fetch Repo Events', [['Repo Changed?']]),
     // IF output 0 is the true branch: 304 means nothing changed, so the run ends there.
-    'Stargazers Changed?': wire('Stargazers Changed?', [
+    'Repo Changed?': wire('Repo Changed?', [
       ['No New Stars (0 quota)', 'Telemetry: Not Modified'],
-      ['Resolve Last Page'],
+      ['Select New Stargazers'],
     ]),
-    'Resolve Last Page': wire('Resolve Last Page', [['Fetch Newest Page']]),
-    'Fetch Newest Page': wire('Fetch Newest Page', [['Select New Stargazers']]),
     'Select New Stargazers': wire('Select New Stargazers', [['Has New Leads?', 'Telemetry: Poll']]),
     'Has New Leads?': wire('Has New Leads?', [['Enrich Profile'], ['Run Halted']]),
     'Enrich Profile': wire('Enrich Profile', [['Score And Filter']]),

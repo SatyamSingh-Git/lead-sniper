@@ -18,10 +18,19 @@ dashboard so you can watch the pipeline work.
 
 Six nodes in a line satisfies the brief. These are the parts that took actual thought:
 
-**The trigger is subtly wrong in most implementations.** `/stargazers` returns results
-*oldest-first*, so polling page 1 returns whoever starred the repo in 2018, forever. And without
-`Accept: application/vnd.github.star+json` there is no `starred_at` field at all — nothing to
-dedupe against. This walks the `Link: rel="last"` cursor instead.
+**The documented endpoint doesn't work, and finding out why took real digging.**
+`GET /repos/:owner/:repo/stargazers` returns **404 for every repo you do not own** — verified
+across repos from 5 stars to 204,000, with a token carrying `repo`, `user` and `admin:org`.
+It is not a permissions gap: `x-accepted-oauth-scopes` comes back empty, anonymous requests get
+401, and `/forks`, `/contributors` and `/topics` on the same repo all return 200. GraphQL agrees —
+`stargazerCount` reports 102,246 for `fastapi/fastapi` while the `stargazers` connection returns
+`totalCount: 0`. It's a deliberate anti-scraping lockdown, aimed at roughly this use case.
+
+So the trigger reads the **repository events feed** instead, where every star arrives as a
+`WatchEvent`. That turned out better than the original: it works on any public repo, comes back
+newest-first (no pagination walk), costs one request per poll instead of two, still supports ETag
+revalidation, and GitHub volunteers an `X-Poll-Interval` header telling you how often it wants to
+be polled. The full investigation is in [LOGIC-LOG.md](LOGIC-LOG.md).
 
 **Most polls cost zero API quota.** Conditional requests with `If-None-Match` return `304 Not
 Modified`, which does not decrement the rate limit. The full strategy is in
@@ -113,7 +122,7 @@ One server covers every external dependency, so no token, key or webhook is requ
 
 | Endpoint | Stands in for | Behaviour |
 |---|---|---|
-| `/repos/:o/:r/stargazers` | GitHub | `star+json` timestamps, `Link: rel="last"` pagination, ETag revalidation returning a free `304`, a live `x-ratelimit-*` ledger, and a new stargazer every 20s |
+| `/repos/:o/:r/events` | GitHub | `WatchEvent`s mixed with pushes and forks, ETag revalidation returning a free `304`, `X-Poll-Interval`, a live `x-ratelimit-*` ledger, and a new stargazer every 20s |
 | `/users/:login` | GitHub | full profile payloads, `404` for unknown logins |
 | `/api/v1/chat/completions` | OpenRouter | OpenAI-shaped response, pitch built from the prompt it was actually sent |
 | `/api/webhooks/:id/:token` | Discord | `204`, logging each embed it receives |
@@ -136,11 +145,9 @@ including two free 304 polls, three qualified leads and three rejections.
 ```mermaid
 flowchart TD
     A[Schedule · 5 min] --> B[Load cursor + ETags<br/>from staticData]
-    B --> C{{"GET /stargazers?per_page=1<br/>If-None-Match"}}
+    B --> C{{"GET /repos/:o/:r/events?per_page=100<br/>If-None-Match"}}
     C -->|304 · 0 quota| Z[End cleanly]
-    C -->|200| D[Link rel=last → newest page]
-    D --> E{{"GET /stargazers?per_page=100&page=N"}}
-    E --> F[Select stars newer than cursor<br/>cap at MAX_ENRICH_PER_RUN]
+    C -->|200| F[Keep WatchEvents newer than cursor<br/>cap at MAX_ENRICH_PER_RUN]
     F -->|quota below reserve| Z
     F --> G{{"GET /users/:login<br/>serialized 1 @ 800ms"}}
     G --> H[Sniper Score + hard gate]
@@ -160,8 +167,7 @@ clicking through eight nodes in the n8n editor.
 | # | Node | Does |
 |---|---|---|
 | 01 | [prepare-poll](workflow/nodes/01-prepare-poll.js) | Loads cursor + ETags, bootstraps first run |
-| 02 | [resolve-last-page](workflow/nodes/02-resolve-last-page.js) | Reads `Link: rel="last"` to find the newest page |
-| 03 | [select-new-stargazers](workflow/nodes/03-select-new-stargazers.js) | Cursor filter, dedupe, budget cap, circuit breaker |
+| 03 | [select-new-stargazers](workflow/nodes/03-select-new-stargazers.js) | Keeps `WatchEvent`s, cursor filter, dedupe, budget cap, circuit breaker |
 | 04 | [score-and-filter](workflow/nodes/04-score-and-filter.js) | Sniper Score + the assignment's hard gate |
 | 05 | [build-prompt](workflow/nodes/05-build-prompt.js) | Prompt-injection hardening |
 | 06 | [parse-pitch](workflow/nodes/06-parse-pitch.js) | Strict JSON parse + template fallback |

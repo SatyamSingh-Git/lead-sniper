@@ -22,9 +22,11 @@ if (coldStart) {
 
 state.polls += 1;
 
-// per_page=1 makes this the cheapest possible change-detector: the Link header's rel="last"
-// page number is the total star count, and the ETag changes the moment that count does.
-const probeUrl = `${cfg.apiBase}/repos/${owner}/${name}/stargazers?per_page=1`;
+// The repository events feed, not /stargazers. GitHub now answers /stargazers with 404 for
+// any repo you do not own, at every size — so the documented endpoint cannot watch someone
+// else's project. Events still carry every star as a WatchEvent, work on any public repo,
+// come back newest-first, and support the same ETag revalidation.
+const eventsUrl = `${cfg.apiBase}/repos/${owner}/${name}/events?per_page=100`;
 
 return [
   {
@@ -32,8 +34,8 @@ return [
       ...cfg,
       owner,
       name,
-      probeUrl,
-      probeEtag: state.etags[probeUrl] ?? '',
+      eventsUrl,
+      eventsEtag: state.etags[eventsUrl] ?? '',
       lastStarredAt: state.lastStarredAt,
       poll: state.polls,
       coldStart,

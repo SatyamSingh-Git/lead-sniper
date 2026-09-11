@@ -42,7 +42,7 @@
             {
               "id": "cfg-targetRepo",
               "name": "targetRepo",
-              "value": "SatyamSingh-Git/Smart-Irrigation-using-ML",
+              "value": "fastapi/fastapi",
               "type": "string"
             },
             {
@@ -96,7 +96,7 @@
             {
               "id": "cfg-coldStartMaxLeads",
               "name": "coldStartMaxLeads",
-              "value": 3,
+              "value": 25,
               "type": "number"
             },
             {
@@ -108,7 +108,7 @@
             {
               "id": "cfg-bootstrapLookbackHours",
               "name": "bootstrapLookbackHours",
-              "value": 17520,
+              "value": 72,
               "type": "number"
             }
           ]
@@ -126,7 +126,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const cfg = $input.first().json;\r\nconst state = $getWorkflowStaticData('global');\r\nconst [owner, name] = cfg.targetRepo.split('/');\r\n\r\nstate.etags ??= {};\r\nstate.seenLogins ??= [];\r\nstate.polls ??= 0;\r\nstate.notModified ??= 0;\r\nstate.savedRequests ??= 0;\r\n\r\n// A popular repo has tens of thousands of stargazers. With no cursor we would alert on all\r\n// of them, so the first run starts from a recent lookback instead of replaying history.\r\n//\r\n// Note this is also the state of EVERY manual execution: n8n only persists static data for\r\n// production runs (`if (!isManualMode ...)` in its execution lifecycle hooks), so pressing\r\n// \"Test workflow\" always cold-starts. Hence the separate, much smaller cold-start cap —\r\n// without it a manual run on a busy repo fires a wall of duplicate alerts every time.\r\nconst coldStart = !state.lastStarredAt;\r\nif (coldStart) {\r\n  state.lastStarredAt = new Date(Date.now() - cfg.bootstrapLookbackHours * 3600e3).toISOString();\r\n}\r\n\r\nstate.polls += 1;\r\n\r\n// per_page=1 makes this the cheapest possible change-detector: the Link header's rel=\"last\"\r\n// page number is the total star count, and the ETag changes the moment that count does.\r\nconst probeUrl = `${cfg.apiBase}/repos/${owner}/${name}/stargazers?per_page=1`;\r\n\r\nreturn [\r\n  {\r\n    json: {\r\n      ...cfg,\r\n      owner,\r\n      name,\r\n      probeUrl,\r\n      probeEtag: state.etags[probeUrl] ?? '',\r\n      lastStarredAt: state.lastStarredAt,\r\n      poll: state.polls,\r\n      coldStart,\r\n    },\r\n  },\r\n];\r\n"
+        "jsCode": "const cfg = $input.first().json;\nconst state = $getWorkflowStaticData('global');\nconst [owner, name] = cfg.targetRepo.split('/');\n\nstate.etags ??= {};\nstate.seenLogins ??= [];\nstate.polls ??= 0;\nstate.notModified ??= 0;\nstate.savedRequests ??= 0;\n\n// A popular repo has tens of thousands of stargazers. With no cursor we would alert on all\n// of them, so the first run starts from a recent lookback instead of replaying history.\n//\n// Note this is also the state of EVERY manual execution: n8n only persists static data for\n// production runs (`if (!isManualMode ...)` in its execution lifecycle hooks), so pressing\n// \"Test workflow\" always cold-starts. Hence the separate, much smaller cold-start cap —\n// without it a manual run on a busy repo fires a wall of duplicate alerts every time.\nconst coldStart = !state.lastStarredAt;\nif (coldStart) {\n  state.lastStarredAt = new Date(Date.now() - cfg.bootstrapLookbackHours * 3600e3).toISOString();\n}\n\nstate.polls += 1;\n\n// The repository events feed, not /stargazers. GitHub now answers /stargazers with 404 for\n// any repo you do not own, at every size — so the documented endpoint cannot watch someone\n// else's project. Events still carry every star as a WatchEvent, work on any public repo,\n// come back newest-first, and support the same ETag revalidation.\nconst eventsUrl = `${cfg.apiBase}/repos/${owner}/${name}/events?per_page=100`;\n\nreturn [\n  {\n    json: {\n      ...cfg,\n      owner,\n      name,\n      eventsUrl,\n      eventsEtag: state.etags[eventsUrl] ?? '',\n      lastStarredAt: state.lastStarredAt,\n      poll: state.polls,\n      coldStart,\n    },\n  },\n];\n"
       },
       "id": "prepare-poll",
       "name": "Prepare Poll",
@@ -153,7 +153,7 @@
           }
         },
         "method": "GET",
-        "url": "={{ $json.probeUrl }}",
+        "url": "={{ $json.eventsUrl }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
@@ -161,7 +161,7 @@
           "parameters": [
             {
               "name": "Accept",
-              "value": "application/vnd.github.star+json"
+              "value": "application/vnd.github+json"
             },
             {
               "name": "X-GitHub-Api-Version",
@@ -169,13 +169,13 @@
             },
             {
               "name": "If-None-Match",
-              "value": "={{ $json.probeEtag }}"
+              "value": "={{ $json.eventsEtag }}"
             }
           ]
         }
       },
-      "id": "probe-stargazers",
-      "name": "Probe Stargazers",
+      "id": "fetch-repo-events",
+      "name": "Fetch Repo Events",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -203,7 +203,7 @@
           },
           "conditions": [
             {
-              "id": "Stargazers Changed?-cond",
+              "id": "Repo Changed?-cond",
               "leftValue": "={{ $json.statusCode }}",
               "rightValue": 304,
               "operator": {
@@ -216,8 +216,8 @@
         },
         "options": {}
       },
-      "id": "stargazers-changed-",
-      "name": "Stargazers Changed?",
+      "id": "repo-changed-",
+      "name": "Repo Changed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
@@ -264,75 +264,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const cfg = $('Prepare Poll').first().json;\r\nconst res = $input.first().json;\r\nconst state = $getWorkflowStaticData('global');\r\n\r\n// ETags are cached per URL, not per repo: the per_page=1 probe and the per_page=100 page\r\n// are different resources and their validators are not interchangeable.\r\nif (res.headers.etag) state.etags[cfg.probeUrl] = res.headers.etag;\r\n\r\n// Stargazers come back oldest-first, so the newest stars are on the LAST page. Polling\r\n// page 1 forever returns whoever starred the repo in 2018.\r\nconst lastPageLink = (res.headers.link ?? '').match(/[?&]page=(\\d+)[^>]*>;\\s*rel=\"last\"/);\r\nconst totalStars = lastPageLink ? Number(lastPageLink[1]) : (res.body ?? []).length;\r\nconst lastPage = Math.max(1, Math.ceil(totalStars / 100));\r\n\r\nconst pageUrl = `${cfg.apiBase}/repos/${cfg.owner}/${cfg.name}/stargazers?per_page=100&page=${lastPage}`;\r\n\r\nreturn [\r\n  {\r\n    json: {\r\n      ...cfg,\r\n      pageUrl,\r\n      pageEtag: state.etags[pageUrl] ?? '',\r\n      totalStars,\r\n      lastPage,\r\n      remaining: Number(res.headers['x-ratelimit-remaining'] ?? -1),\r\n      reset: Number(res.headers['x-ratelimit-reset'] ?? 0),\r\n    },\r\n  },\r\n];\r\n"
-      },
-      "id": "resolve-last-page",
-      "name": "Resolve Last Page",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1200,
-        0
-      ]
-    },
-    {
-      "parameters": {
-        "options": {
-          "response": {
-            "response": {
-              "fullResponse": true,
-              "neverError": true
-            }
-          },
-          "redirect": {
-            "redirect": {
-              "followRedirects": true
-            }
-          }
-        },
-        "method": "GET",
-        "url": "={{ $json.pageUrl }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Accept",
-              "value": "application/vnd.github.star+json"
-            },
-            {
-              "name": "X-GitHub-Api-Version",
-              "value": "2022-11-28"
-            },
-            {
-              "name": "If-None-Match",
-              "value": "={{ $json.pageEtag }}"
-            }
-          ]
-        }
-      },
-      "id": "fetch-newest-page",
-      "name": "Fetch Newest Page",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1440,
-        0
-      ],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "lead-sniper-github",
-          "name": "GitHub PAT (Header Auth)"
-        }
-      },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
-    },
-    {
-      "parameters": {
-        "jsCode": "const cfg = $('Resolve Last Page').first().json;\r\nconst res = $input.first().json;\r\nconst state = $getWorkflowStaticData('global');\r\n\r\nconst remaining = Number(res.headers?.['x-ratelimit-remaining'] ?? cfg.remaining);\r\nconst reset = Number(res.headers?.['x-ratelimit-reset'] ?? cfg.reset);\r\n\r\nconst halt = (reason, extra = {}) => [\r\n  { json: { ...cfg, halt: true, reason, remaining, reset, scanned: 0, newCount: 0, ...extra } },\r\n];\r\n\r\nif (res.statusCode === 304) {\r\n  state.notModified += 1;\r\n  state.savedRequests += 1;\r\n  return halt('not_modified');\r\n}\r\n\r\nif (res.headers?.etag) state.etags[cfg.pageUrl] = res.headers.etag;\r\n\r\n// Below the reserve we stop rather than race a concurrent job to zero. Ending the run\r\n// cleanly instead of throwing means the next scheduled poll just picks up where we left off,\r\n// with no failed execution to clear by hand.\r\nif (remaining >= 0 && remaining < cfg.rateLimitReserve) {\r\n  return halt('rate_limit_reserve');\r\n}\r\n\r\nconst stars = Array.isArray(res.body) ? res.body : [];\r\nconst seen = new Set(state.seenLogins);\r\n\r\n// starred_at is a UTC ISO-8601 string, so lexical comparison is chronological.\r\nconst fresh = stars\r\n  .filter((s) => s.starred_at > cfg.lastStarredAt && !seen.has(s.user.login))\r\n  .sort((a, b) => a.starred_at.localeCompare(b.starred_at));\r\n\r\nif (fresh.length === 0) return halt('no_new_stars', { scanned: stars.length });\r\n\r\n// One viral hour should not drain the whole quota. The cursor only advances over what we\r\n// actually process, so anything past the cap is picked up by the next poll rather than lost.\r\n// A cold start (first activation, or any manual run) uses a tighter cap so it produces a\r\n// readable handful of alerts rather than a wall of them.\r\nconst cap = cfg.coldStart ? cfg.coldStartMaxLeads : cfg.maxEnrichPerRun;\r\nconst budgeted = fresh.slice(0, cap);\r\n\r\nreturn budgeted.map((s) => ({\r\n  json: {\r\n    ...cfg,\r\n    halt: false,\r\n    login: s.user.login,\r\n    avatarUrl: s.user.avatar_url,\r\n    starredAt: s.starred_at,\r\n    userUrl: `${cfg.apiBase}/users/${s.user.login}`,\r\n    scanned: stars.length,\r\n    newCount: fresh.length,\r\n    deferred: fresh.length - budgeted.length,\r\n    remaining,\r\n    reset,\r\n  },\r\n}));\r\n"
+        "jsCode": "const cfg = $('Prepare Poll').first().json;\nconst res = $input.first().json;\nconst state = $getWorkflowStaticData('global');\n\nconst remaining = Number(res.headers?.['x-ratelimit-remaining'] ?? -1);\nconst reset = Number(res.headers?.['x-ratelimit-reset'] ?? 0);\n\nconst halt = (reason, extra = {}) => [\n  { json: { ...cfg, halt: true, reason, remaining, reset, scanned: 0, newCount: 0, ...extra } },\n];\n\n// Revalidation matched, so nothing has happened in this repo since the last poll and the\n// request cost no quota at all.\nif (res.statusCode === 304) {\n  state.notModified += 1;\n  state.savedRequests += 1;\n  return halt('not_modified');\n}\n\nif (res.headers?.etag) state.etags[cfg.eventsUrl] = res.headers.etag;\n\n// GitHub states how often this feed may be polled. Honour it rather than guessing.\nconst pollInterval = Number(res.headers?.['x-poll-interval'] ?? 0);\n\n// Below the reserve we stop rather than race a concurrent job to zero. Ending the run\n// cleanly instead of throwing means the next scheduled poll just picks up where we left off,\n// with no failed execution to clear by hand.\nif (remaining >= 0 && remaining < cfg.rateLimitReserve) {\n  return halt('rate_limit_reserve', { pollInterval });\n}\n\nconst events = Array.isArray(res.body) ? res.body : [];\n\n// A star is a WatchEvent. The feed also carries pushes, forks, issues and PRs, which is why\n// one page of 100 events yields far fewer than 100 stargazers.\nconst stars = events.filter((event) => event.type === 'WatchEvent');\nconst seen = new Set(state.seenLogins);\n\n// created_at is a UTC ISO-8601 string, so lexical comparison is chronological. The feed is\n// newest-first; we process oldest-first so the cursor advances monotonically.\nconst fresh = stars\n  .filter((event) => event.created_at > cfg.lastStarredAt && !seen.has(event.actor.login))\n  .sort((a, b) => a.created_at.localeCompare(b.created_at));\n\nif (fresh.length === 0) return halt('no_new_stars', { scanned: stars.length, pollInterval });\n\n// One viral hour should not drain the whole quota. The cursor only advances over what we\n// actually process, so anything past the cap is picked up by the next poll rather than lost.\n// A cold start (first activation, or any manual run) uses a tighter cap so it produces a\n// readable handful of alerts rather than a wall of them.\nconst cap = cfg.coldStart ? cfg.coldStartMaxLeads : cfg.maxEnrichPerRun;\nconst budgeted = fresh.slice(0, cap);\n\nreturn budgeted.map((event) => ({\n  json: {\n    ...cfg,\n    halt: false,\n    login: event.actor.login,\n    avatarUrl: event.actor.avatar_url,\n    starredAt: event.created_at,\n    userUrl: `${cfg.apiBase}/users/${event.actor.login}`,\n    scanned: stars.length,\n    newCount: fresh.length,\n    deferred: fresh.length - budgeted.length,\n    pollInterval,\n    remaining,\n    reset,\n  },\n}));\n"
       },
       "id": "select-new-stargazers",
       "name": "Select New Stargazers",
@@ -358,7 +290,7 @@
         "url": "={{ $('Config').first().json.dashboardUrl }}/event",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ type: 'poll', poll: $json.poll, repo: $json.targetRepo, totalStars: $json.totalStars, scanned: $json.scanned, newCount: $json.newCount, halt: $json.halt, reason: $json.reason || null, remaining: $json.remaining, reset: $json.reset, notModified: false }) }}"
+        "jsonBody": "={{ JSON.stringify({ type: 'poll', poll: $json.poll, repo: $json.targetRepo, scanned: $json.scanned, newCount: $json.newCount, halt: $json.halt, reason: $json.reason || null, remaining: $json.remaining, reset: $json.reset, notModified: false }) }}"
       },
       "id": "telemetry-poll",
       "name": "Telemetry: Poll",
@@ -439,7 +371,7 @@
           "parameters": [
             {
               "name": "Accept",
-              "value": "application/vnd.github.star+json"
+              "value": "application/vnd.github+json"
             },
             {
               "name": "X-GitHub-Api-Version",
@@ -753,25 +685,25 @@
       "main": [
         [
           {
-            "node": "Probe Stargazers",
+            "node": "Fetch Repo Events",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Probe Stargazers": {
+    "Fetch Repo Events": {
       "main": [
         [
           {
-            "node": "Stargazers Changed?",
+            "node": "Repo Changed?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Stargazers Changed?": {
+    "Repo Changed?": {
       "main": [
         [
           {
@@ -785,28 +717,6 @@
             "index": 0
           }
         ],
-        [
-          {
-            "node": "Resolve Last Page",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Resolve Last Page": {
-      "main": [
-        [
-          {
-            "node": "Fetch Newest Page",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Fetch Newest Page": {
-      "main": [
         [
           {
             "node": "Select New Stargazers",

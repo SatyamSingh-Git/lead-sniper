@@ -53,7 +53,7 @@ explicit array in a variable plus a loop, and the `$('Node').all()` lookups in n
 
 ## What ports unchanged
 
-- All the API mechanics: `star+json`, `Link: rel="last"`, `If-None-Match`, reading
+- All the API mechanics: the events feed, `If-None-Match`, `X-Poll-Interval`, reading
   `x-ratelimit-remaining`. These are properties of GitHub, not of the runtime.
 - The scoring function — plain JS, drops straight into a function node.
 - The prompt, the injection hardening, and the template fallback.

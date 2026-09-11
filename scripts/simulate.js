@@ -107,44 +107,34 @@ check('seeds a bootstrap cursor instead of replaying history',
 // poll after the first sees. The rest of the simulation runs against it.
 const prepared = run('Prepare Poll', '01-prepare-poll.js', [{ json: config }]);
 check('later runs are warm and reuse the stored cursor', prepared[0].json.coldStart === false);
-check('builds the cheap per_page=1 probe URL', prepared[0].json.probeUrl.endsWith('per_page=1'));
-
-console.log(c.cyan('\n02  Resolve Last Page'));
-const probeRes = [{
-  json: {
-    statusCode: 200,
-    headers: {
-      etag: 'W/"probe-etag-1"',
-      link: '<https://api.github.com/repositories/160919119/stargazers?per_page=1&page=2>; rel="next", <https://api.github.com/repositories/160919119/stargazers?per_page=1&page=88057>; rel="last"',
-      'x-ratelimit-remaining': '4987',
-      'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 1800),
-    },
-    body: [],
-  },
-}];
-const resolved = run('Resolve Last Page', '02-resolve-last-page.js', probeRes);
-check('reads total stars from Link rel="last"', resolved[0].json.totalStars === 88057, c.dim('88,057'));
-check('targets the LAST page, not page 1', resolved[0].json.lastPage === 881, c.dim(`page ${resolved[0].json.lastPage}`));
-check('caches the probe ETag per URL', state.etags[prepared[0].json.probeUrl] === 'W/"probe-etag-1"');
+check('targets the repo events feed, not /stargazers', prepared[0].json.eventsUrl.includes('/events?per_page=100'));
 
 console.log(c.cyan('\n03  Select New Stargazers'));
-const stars = [
-  { starred_at: minutesAgo(2000), user: { login: 'ancient', avatar_url: 'x' } },
-  { starred_at: minutesAgo(9), user: { login: 'octocat', avatar_url: profiles.octocat.avatar_url } },
-  { starred_at: minutesAgo(7), user: { login: 'influencer', avatar_url: 'x' } },
-  { starred_at: minutesAgo(5), user: { login: 'builder', avatar_url: 'x' } },
-  { starred_at: minutesAgo(3), user: { login: 'lurker', avatar_url: 'x' } },
-  { starred_at: minutesAgo(1), user: { login: 'injector', avatar_url: 'x' } },
+// The events feed is newest-first and mixes every event type; only WatchEvent is a star.
+const events = [
+  { type: 'WatchEvent', created_at: minutesAgo(1), actor: { login: 'injector', avatar_url: 'x' } },
+  { type: 'PushEvent', created_at: minutesAgo(2), actor: { login: 'a-committer', avatar_url: 'x' } },
+  { type: 'WatchEvent', created_at: minutesAgo(3), actor: { login: 'lurker', avatar_url: 'x' } },
+  { type: 'ForkEvent', created_at: minutesAgo(4), actor: { login: 'a-forker', avatar_url: 'x' } },
+  { type: 'WatchEvent', created_at: minutesAgo(5), actor: { login: 'builder', avatar_url: 'x' } },
+  { type: 'WatchEvent', created_at: minutesAgo(7), actor: { login: 'influencer', avatar_url: 'x' } },
+  { type: 'IssuesEvent', created_at: minutesAgo(8), actor: { login: 'a-reporter', avatar_url: 'x' } },
+  { type: 'WatchEvent', created_at: minutesAgo(9), actor: { login: 'octocat', avatar_url: 'x' } },
+  { type: 'WatchEvent', created_at: minutesAgo(2000), actor: { login: 'ancient', avatar_url: 'x' } },
 ];
 const pageHeaders = {
-  etag: 'W/"page-etag-1"',
+  etag: 'W/"events-etag-1"',
   'x-ratelimit-remaining': '4986',
   'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 1800),
+  'x-poll-interval': '60',
 };
 const selected = run('Select New Stargazers', '03-select-new-stargazers.js', [
-  { json: { statusCode: 200, headers: pageHeaders, body: stars } },
+  { json: { statusCode: 200, headers: pageHeaders, body: events } },
 ]);
-check('selects only stars newer than the cursor', selected.length === 5, c.dim(`${selected.length} of ${stars.length}`));
+check('ignores every event type except WatchEvent', selected.every((i) => !i.json.login.startsWith('a-')));
+check('selects only stars newer than the cursor', selected.length === 5, c.dim(`${selected.length} of ${events.length} events`));
+check('caches the events ETag per URL', state.etags[prepared[0].json.eventsUrl] === 'W/"events-etag-1"');
+check('honours the server-supplied X-Poll-Interval', selected[0].json.pollInterval === 60);
 check('sorts oldest first', selected[0].json.login === 'octocat');
 
 console.log(c.cyan('\n04  Score And Filter'));
@@ -217,9 +207,9 @@ check('advances the cursor to the newest processed star',
 check('records seen logins for dedupe', state.seenLogins.length === selected.length);
 
 console.log(c.cyan('\n     Rate-limit guards'));
-outputs['Resolve Last Page'] = [{ json: { ...resolved[0].json, remaining: 100 } }];
+
 const starved = run('Select New Stargazers', '03-select-new-stargazers.js', [
-  { json: { statusCode: 200, headers: { ...pageHeaders, 'x-ratelimit-remaining': '100' }, body: stars } },
+  { json: { statusCode: 200, headers: { ...pageHeaders, 'x-ratelimit-remaining': '100' }, body: events } },
 ]);
 check('opens the circuit below the reserve', starved[0].json.halt && starved[0].json.reason === 'rate_limit_reserve');
 
@@ -227,17 +217,17 @@ check('opens the circuit below the reserve', starved[0].json.halt && starved[0].
 // a cold start. Without the tighter cap that means a wall of duplicate alerts, every click.
 const warmSeen = state.seenLogins;
 state.seenLogins = [];
-outputs['Resolve Last Page'] = [{
-  json: { ...resolved[0].json, coldStart: true, lastStarredAt: minutesAgo(1440) },
+outputs['Prepare Poll'] = [{
+  json: { ...prepared[0].json, coldStart: true, lastStarredAt: minutesAgo(1440) },
 }];
 const coldSelect = run('Select New Stargazers', '03-select-new-stargazers.js', [
-  { json: { statusCode: 200, headers: pageHeaders, body: stars } },
+  { json: { statusCode: 200, headers: pageHeaders, body: events } },
 ]);
 check('a cold start caps alerts far below the steady-state limit',
   coldSelect.length === config.coldStartMaxLeads,
   c.dim(`${coldSelect.length} alerts vs ${config.maxEnrichPerRun} once warm`));
 state.seenLogins = warmSeen;
-outputs['Resolve Last Page'] = [{ json: resolved[0].json }];
+outputs['Prepare Poll'] = [{ json: prepared[0].json }];
 
 const notModified = run('Select New Stargazers', '03-select-new-stargazers.js', [
   { json: { statusCode: 304, headers: {}, body: null } },

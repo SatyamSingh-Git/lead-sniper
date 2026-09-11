@@ -105,6 +105,27 @@ createServer((req, res) => {
     return json(200, payload, { etag, link, ...rateHeaders(1) });
   }
 
+  // The repository events feed, which is what the workflow actually polls. Stars arrive as
+  // WatchEvents mixed in with pushes and forks, exactly as the real feed delivers them.
+  if (/^\/repos\/[^/]+\/[^/]+\/events$/.test(url.pathname)) {
+    const feed = [
+      ...stars.map((s) => ({
+        type: 'WatchEvent',
+        created_at: s.starred_at,
+        actor: { login: s.user.login, avatar_url: s.user.avatar_url },
+      })),
+      { type: 'PushEvent', created_at: new Date().toISOString(), actor: { login: 'a-committer' } },
+      { type: 'ForkEvent', created_at: new Date().toISOString(), actor: { login: 'a-forker' } },
+    ].sort((a, b) => b.created_at.localeCompare(a.created_at));
+
+    const etag = etagOf({ feed: feed.length });
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { etag, ...rateHeaders(0) });
+      return res.end();
+    }
+    return json(200, feed, { etag, 'x-poll-interval': '60', ...rateHeaders(1) });
+  }
+
   const userMatch = url.pathname.match(/^\/users\/([^/]+)$/);
   if (userMatch) {
     const person = PEOPLE.find((p) => p.login === userMatch[1]);
