@@ -76,8 +76,10 @@ Fill in three things:
 | `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) |
 | `DISCORD_WEBHOOK_URL` | Server Settings → Integrations → Webhooks → New Webhook → Copy URL |
 
-A GitHub token is **not optional**: `/stargazers` returns `401` with no token at all, unlike
-`/users`. `npm run preflight` will tell you if any of the three is wrong before you touch n8n.
+The events feed does answer anonymous requests, but 60/hour is not a working budget: a 5-minute
+schedule spends 12 polls an hour before any enrichment. So the token is effectively required, for
+quota rather than access. `npm run preflight` will tell you if any of the three is wrong before
+you touch n8n.
 
 ### 2. Import into n8n
 
@@ -216,7 +218,7 @@ now [a dropped lead and a regression test](scripts/simulate.js) rather than a de
 | Workflow JSON | [`workflow/lead-sniper.workflow.json`](workflow/lead-sniper.workflow.json) |
 | Discord screenshot | `docs/screenshots/discord.png` |
 | Logic Log | [`LOGIC-LOG.md`](LOGIC-LOG.md) |
-| Demo recording | per [`docs/DEMO-SCRIPT.md`](docs/DEMO-SCRIPT.md) |
+| Demo recording | submitted separately |
 
 Also: [`docs/YELLOW-AI-PORT.md`](docs/YELLOW-AI-PORT.md) maps every node onto Yellow.ai Studio's
 equivalents, and names what would have to change.

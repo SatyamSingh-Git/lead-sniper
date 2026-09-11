@@ -6,3 +6,4 @@ submission/demo.mp4
 *.log
 submission/*.pdf
 .n8n-local/
+docs/DEMO-SCRIPT.md
