@@ -115,6 +115,14 @@ const server = createServer(async (req, res) => {
   return serveStatic(res, pathname);
 });
 
+server.on('error', (err) => {
+  if (err.code !== 'EADDRINUSE') throw err;
+  console.log(`\n  Port ${PORT} is already in use — the dashboard is most likely already running.`);
+  console.log(`  Open http://localhost:${PORT}`);
+  console.log(`  To restart it instead: taskkill /F /IM node.exe   (Windows)  or  PORT=8788 npm run dashboard\n`);
+  process.exit(0);
+});
+
 server.listen(PORT, () => {
   console.log(`\n  LEAD SNIPER · mission control`);
   console.log(`  http://localhost:${PORT}`);
