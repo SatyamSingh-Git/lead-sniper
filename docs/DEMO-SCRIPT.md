@@ -13,14 +13,22 @@ npx n8n                  # :5678
 ```
 
 - Discord channel open in a third window, scrolled to the bottom.
-- **Activate the workflow before recording, and let it tick at least twice.** Manual runs never
-  persist static data in n8n, so the `304 · 0 quota` line — the single best moment in this demo —
-  only appears on the second *scheduled* poll. Filming manual runs throws that shot away.
+- **Drop the Schedule Trigger to 1 minute for the recording.** The `304 · 0 quota` line is the
+  best moment in this demo, and it only appears on a *second* poll in production mode — n8n never
+  persists static data for manual runs, so "Test workflow" can never produce it. At the default
+  5 minutes you would wait ten minutes on camera. Set it to 1 minute, activate, capture two ticks,
+  then set it back to 5 before exporting the final JSON.
+- **Use a fresh workflow each take.** The cursor persists, so a second run on the same workflow
+  correctly reports "no new stars" and nothing appears. Re-import to reset it.
 - **`npm run scrub`** — confirm the artifact you're about to show is clean.
-- Zoom the n8n canvas so all 26 nodes fit; the shape of the flow is part of the point.
-- If the target repo is quiet, start `npm run mock` and point `Config.apiBase` at
-  `http://localhost:8788`. A new stargazer arrives every 20 seconds, so the demo never depends on
-  a stranger starring a repo on cue.
+- Zoom the n8n canvas so all 24 nodes fit; the shape of the flow is part of the point.
+- **Live or mock?** Live on `fastapi/fastapi` is more convincing but thin — roughly one lead per
+  twenty-five stargazers, because most people starring a famous repo are learners. The mock gives
+  a denser funnel with HOT/WARM/COLD tiers. Record live; if you want both, show the mock second
+  and say plainly that it is a mock. Never let a mock read as real traffic.
+- To run on the mock: `npm run mock`, then point `Config.apiBase` at `http://localhost:8788`,
+  `llmUrl` at `http://localhost:8788/api/v1/chat/completions` and `discordWebhookUrl` at
+  `http://localhost:8788/api/webhooks/1/demo`.
 
 ## Shots
 
@@ -45,22 +53,30 @@ Hit **Run Once (Demo)**. Cut to the dashboard as it fills:
 - the quota gauge, and the `304 · 0 quota` lines in the event stream
 - a lead card landing with its score ring
 
-*"Three of six passed the gate. The other three cost us nothing past one profile lookup —
-the filter runs before the LLM, so we never spend tokens on a lead we're not going to contact."*
+*"Sixty-nine stargazers, one passed the gate. The other twenty-four cost one profile lookup each
+and nothing more — the filter runs before the LLM, so we never spend tokens on someone we were
+never going to contact."*
 
-**4 · The pitch is grounded (1:30–2:00)**
+**3b · The free poll (1:30–1:50)**
+Stay on the dashboard through the second tick. The event stream prints
+`GET /events 304 · 0 quota` and **the budget number does not move.**
+*"That's the whole rate-limit strategy in one line. Conditional request, nothing changed, GitHub
+returns 304 — and a 304 doesn't count against the limit at all. Most polls are free."*
+
+**4 · The pitch is grounded (1:50–2:15)**
 Zoom one HOT card. Read the bio, then read the pitch.
 *"It didn't invent an employer or a job title. Everything in that sentence is in the profile —
 and the bio is untrusted text, so it's wrapped and the model is told to treat it as data."*
 
-**5 · Discord (2:00–2:20)**
+**5 · Discord (2:15–2:35)**
 Switch to Discord. The embeds are already there. Show the tier colour, the score, the pitch
 field, the footer showing which gate condition fired.
 
-**6 · Close (2:20–2:45)**
+**6 · Close (2:35–2:55)**
 Back to the dashboard, on the quota gauge.
-*"Twelve polls, nine of them free. Full budget still 4,900 of 5,000. It'll keep running every
-five minutes without anyone touching it."*
+*"Two polls, one of them completely free — the second cost zero quota because nothing had
+changed. Budget still 4,873 of 5,000. It keeps running every five minutes without anyone
+touching it."*
 
 ## If something breaks on camera
 
