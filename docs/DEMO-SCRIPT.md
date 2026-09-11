@@ -12,6 +12,10 @@ npm run dashboard        # :8787
 npx n8n                  # :5678
 ```
 
+- **Record into a clean Discord channel.** Shot 1 opens on an empty channel, and any earlier
+  test run will have left alerts in it. Make a fresh `#leads-demo` channel, point
+  `DISCORD_WEBHOOK_URL` at its webhook, `npm run build`, and re-import. Keep the old channel —
+  its real delivered alerts are what you screenshot for submission requirement #2.
 - Discord channel open in a third window, scrolled to the bottom.
 - **Drop the Schedule Trigger to 1 minute for the recording.** The `304 · 0 quota` line is the
   best moment in this demo, and it only appears on a *second* poll in production mode — n8n never
