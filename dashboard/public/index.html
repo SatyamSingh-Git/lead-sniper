@@ -138,7 +138,7 @@
   <header>
     <div class="brand"><span class="dot" id="dot"></span>LEAD&nbsp;SNIPER</div>
     <div class="chip">watching <b id="repo">—</b></div>
-    <div class="chip"><span id="stars">—</span> stars</div>
+    <div class="chip" id="stars-chip" hidden><span id="stars">—</span> stars</div>
     <div class="spacer"></div>
     <div class="chip">poll <b id="pollno">0</b></div>
     <div class="chip num" id="clock">--:--:--</div>
@@ -338,7 +338,9 @@ function render() {
   const s = derive();
 
   $('repo').textContent = s.repo ?? 'not started';
-  $('stars').textContent = s.totalStars ? fmt(s.totalStars) : '—';
+  // The events feed carries no star count, so hide the chip rather than show a dash.
+  $('stars-chip').hidden = !s.totalStars;
+  if (s.totalStars) $('stars').textContent = fmt(s.totalStars);
   $('pollno').textContent = s.poll;
   $('dot').className = 'dot' + (events.length ? '' : ' off');
 
